@@ -1,0 +1,11 @@
+#include "pokitto_compat/Pokitto.h"
+
+#include "Bird.h"
+#include "Birds.h"
+#include "Clapper.h"
+#include "Clappers.h"
+#include "Key.h"
+#include "Kong.h"
+#include "Player.h"
+#include "Spark.h"
+#include "Sparks.h"
