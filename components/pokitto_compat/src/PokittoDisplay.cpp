@@ -1,62 +1,83 @@
 #include "pokitto_compat/PokittoDisplay.h"
+#include "pokitto_compat/Font5x7.h"
 #include "gb_graphics.h"
 #include "esp_heap_caps.h"
 #include <cstring>
 #include <cstdlib>
 
-extern gb_graphics gfx;   // instance globale, cf main.cpp
+extern gb_graphics gfx;
 
 namespace Pokitto {
 
-uint8_t  Display::s_penColor = 0;
-uint8_t  Display::s_invisibleColor = 255;   // aucune transparence tant que non reglee
-uint16_t Display::s_palette[16] = {0};
+uint8_t  Display::invisiblecolor = 255;   // aucune transparence tant que non reglee
+uint8_t* Display::screenbuffer = nullptr;
 bool     Display::persistence = false;
+uint8_t  Display::s_penColor = 0;
+uint16_t Display::s_palette[16] = {0};
+const uint8_t* Display::s_font = nullptr;
+int16_t  Display::s_cursorX = 0;
+int16_t  Display::s_cursorY = 0;
+
+static uint16_t* s_decodeBuf = nullptr;   // RGB565 scratch (PSRAM), decode complet a chaque present()
 
 static inline uint16_t pack_bgr565(uint8_t r, uint8_t g, uint8_t b) {
-    return (uint16_t)((r >> 3) | ((g >> 2) << 5) | ((b >> 3) << 11));   // BGR565 natif AKA
+    return (uint16_t)((r >> 3) | ((g >> 2) << 5) | ((b >> 3) << 11));
 }
 
-// Buffer de decodage reutilisable (PSRAM) : assez grand pour n'importe quel
-// bitmap Pokitto (max = l'ecran Pokitto complet, 220x176).
-static uint16_t* s_scratch = nullptr;
-static uint16_t* scratch() {
-    if (!s_scratch)
-        s_scratch = (uint16_t*)heap_caps_malloc(POK_SCREEN_W * POK_SCREEN_H * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
-    return s_scratch;
+void Display::ensureBuffers() {
+    if (!screenbuffer)
+        screenbuffer = (uint8_t*)heap_caps_malloc((width * height) / 2, MALLOC_CAP_SPIRAM);
+    if (!s_decodeBuf)
+        s_decodeBuf = (uint16_t*)heap_caps_malloc((size_t)width * height * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
 }
-// Couleur-cle utilisee pour marquer les pixels transparents dans le buffer decode.
-static const uint16_t TRANS_KEY = 0xF81F;   // magenta BGR565 (meme convention que le reste du projet)
+
+void Display::setNibble(int16_t x, int16_t y, uint8_t idx) {
+    if (x < 0 || y < 0 || x >= width || y >= height) return;
+    ensureBuffers();
+    if (!screenbuffer) return;
+    int off = y * (width >> 1) + (x >> 1);
+    uint8_t& b = screenbuffer[off];
+    if (x & 1) b = (uint8_t)((b & 0xF0) | (idx & 0x0F));
+    else       b = (uint8_t)((b & 0x0F) | ((idx & 0x0F) << 4));
+}
+uint8_t Display::getNibble(int16_t x, int16_t y) {
+    if (x < 0 || y < 0 || x >= width || y >= height) return 0;
+    ensureBuffers();
+    if (!screenbuffer) return 0;
+    int off = y * (width >> 1) + (x >> 1);
+    uint8_t b = screenbuffer[off];
+    return (x & 1) ? (uint8_t)(b & 0x0F) : (uint8_t)(b >> 4);
+}
 
 void Display::loadRGBPalette(const uint8_t* palette24) {
     for (int i = 0; i < 16; ++i)
         s_palette[i] = pack_bgr565(palette24[i*3+0], palette24[i*3+1], palette24[i*3+2]);
 }
 void Display::setColor(uint8_t idx)          { s_penColor = idx; }
-void Display::setInvisibleColor(uint8_t idx) { s_invisibleColor = idx; }
+void Display::setInvisibleColor(uint8_t idx) { invisiblecolor = idx; }
 
 void Display::clear() {
-    gfx.setColor(gfx.makeColor(0, 0, 0));
-    gfx.fillRect(POK_VIEWPORT_X, POK_VIEWPORT_Y, POK_SCREEN_W, POK_SCREEN_H);
+    ensureBuffers();
+    if (screenbuffer) memset(screenbuffer, 0, (width * height) / 2);
 }
 void Display::fillScreen(uint16_t colorIdx) {
-    uint16_t c = (colorIdx < 16) ? s_palette[colorIdx] : 0;
-    gfx.setColor(c);
-    gfx.fillRect(POK_VIEWPORT_X, POK_VIEWPORT_Y, POK_SCREEN_W, POK_SCREEN_H);
+    ensureBuffers();
+    if (!screenbuffer) return;
+    uint8_t v = (uint8_t)(((colorIdx & 0x0F) << 4) | (colorIdx & 0x0F));
+    memset(screenbuffer, v, (width * height) / 2);
 }
-void Display::drawPixel(int16_t x, int16_t y) {
-    if (x < 0 || y < 0 || x >= POK_SCREEN_W || y >= POK_SCREEN_H) return;
-    gfx.setColor(s_palette[s_penColor & 0x0F]);
-    gfx.fillRect(POK_VIEWPORT_X + x, POK_VIEWPORT_Y + y, 1, 1);
+void Display::drawPixel(int16_t x, int16_t y) { setNibble(x, y, s_penColor); }
+
+void Display::drawColumn(int16_t x, int16_t y0, int16_t y1) {
+    if (y0 > y1) { int16_t t = y0; y0 = y1; y1 = t; }
+    for (int16_t y = y0; y <= y1; ++y) setNibble(x, y, s_penColor);
 }
 void Display::drawLine(int16_t x0, int16_t y0, int16_t x1, int16_t y1) {
-    gfx.setColor(s_palette[s_penColor & 0x0F]);
     int dx = abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
     int dy = -abs(y1 - y0), sy = y0 < y1 ? 1 : -1;
     int err = dx + dy;
     for (;;) {
-        if (x0 >= 0 && y0 >= 0 && x0 < POK_SCREEN_W && y0 < POK_SCREEN_H)
-            gfx.fillRect(POK_VIEWPORT_X + x0, POK_VIEWPORT_Y + y0, 1, 1);
+        setNibble((int16_t)x0, (int16_t)y0, s_penColor);
         if (x0 == x1 && y0 == y1) break;
         int e2 = 2 * err;
         if (e2 >= dy) { err += dy; x0 += sx; }
@@ -64,24 +85,19 @@ void Display::drawLine(int16_t x0, int16_t y0, int16_t x1, int16_t y1) {
     }
 }
 void Display::drawRect(int16_t x, int16_t y, int16_t w, int16_t h) {
-    gfx.setColor(s_palette[s_penColor & 0x0F]);
-    gfx.drawRect(POK_VIEWPORT_X + x, POK_VIEWPORT_Y + y, w, h);
+    for (int16_t i = 0; i < w; ++i) { setNibble(x+i, y, s_penColor); setNibble(x+i, y+h-1, s_penColor); }
+    for (int16_t j = 0; j < h; ++j) { setNibble(x, y+j, s_penColor); setNibble(x+w-1, y+j, s_penColor); }
 }
 void Display::fillRect(int16_t x, int16_t y, int16_t w, int16_t h) {
-    gfx.setColor(s_palette[s_penColor & 0x0F]);
-    gfx.fillRect(POK_VIEWPORT_X + x, POK_VIEWPORT_Y + y, w, h);
+    for (int16_t j = 0; j < h; ++j)
+        for (int16_t i = 0; i < w; ++i)
+            setNibble(x+i, y+j, s_penColor);
 }
 
-// Bitmap Kong-II : [0]=W [1]=H puis les donnees 4bpp (2 pixels/octet). IMPORTANT :
-// chaque LIGNE est alignee sur un octet entier (ceil(W/2) octets/ligne) -- ce
-// n'est PAS un flux continu de nibbles sur toute l'image. Pour une largeur
-// impaire, un flux continu decale progressivement chaque ligne d'un demi-octet
-// -> cisaillement diagonal (confirme sur Ppot_Full.h : 131x68, 4488 octets
-// reels = 66 octets/ligne (aligne) x 68, alors qu'un flux continu donnerait 4454).
+// Bitmap : [0]=W [1]=H puis donnees 4bpp, CHAQUE LIGNE ALIGNEE SUR UN OCTET
+// (rowBytes=(W+1)/2) -- confirme sur 2 jeux (Kong-II, Galaxy Fighter).
 void Display::drawBitmap(int16_t x, int16_t y, const uint8_t* bitmap) {
     uint8_t w = bitmap[0], h = bitmap[1];
-    uint16_t* buf = scratch();
-    if (!buf) return;
     const uint8_t* px = bitmap + 2;
     int rowBytes = (w + 1) / 2;
     for (int row = 0; row < h; ++row) {
@@ -89,16 +105,40 @@ void Display::drawBitmap(int16_t x, int16_t y, const uint8_t* bitmap) {
         for (int col = 0; col < w; ++col) {
             uint8_t b = rowPx[col >> 1];
             uint8_t idx = (col & 1) ? (b & 0x0F) : (b >> 4);
-            buf[row * w + col] = (idx == s_invisibleColor) ? TRANS_KEY : s_palette[idx & 0x0F];
+            if (idx == invisiblecolor) continue;
+            setNibble((int16_t)(x+col), (int16_t)(y+row), idx);
         }
     }
-    gfx.drawImage(POK_VIEWPORT_X + x, POK_VIEWPORT_Y + y, buf, w, h, TRANS_KEY);
+}
+void Display::drawBitmap(int16_t x, int16_t y, const uint8_t* bitmap, bool /*flipX*/, bool /*flipY*/) {
+    drawBitmap(x, y, bitmap);   // retournement pas encore implemente (idem V0.1)
 }
 
-void Display::setCursor(int16_t x, int16_t y) { gfx.move_cursor(POK_VIEWPORT_X + x, POK_VIEWPORT_Y + y); }
-void Display::print(const char* s)   { gfx.setColor(s_palette[s_penColor & 0x0F]); gfx.print_str(s); }
-void Display::println(const char* s) { gfx.setColor(s_palette[s_penColor & 0x0F]); gfx.print_str(s); gfx.print_str("\n"); }
+void Display::setCursor(int16_t x, int16_t y) { s_cursorX = x; s_cursorY = y; }
+void Display::setFont(const uint8_t* font)    { s_font = font; }
 
-void Display::present() { gfx.update(); }
+void Display::print(char c) {
+    const uint8_t* f = s_font ? s_font : font5x7;
+    int idx = (c >= FONT5X7_FIRST && c <= FONT5X7_LAST) ? (c - FONT5X7_FIRST) : 0;
+    const uint8_t* glyph = f + idx * FONT5X7_WIDTH;
+    for (int col = 0; col < FONT5X7_WIDTH; ++col) {
+        uint8_t bits = glyph[col];
+        for (int row = 0; row < FONT5X7_HEIGHT; ++row)
+            if (bits & (1 << row)) setNibble((int16_t)(s_cursorX+col), (int16_t)(s_cursorY+row), s_penColor);
+    }
+    s_cursorX += FONT5X7_WIDTH + 1;
+}
+void Display::print(const char* s) { while (*s) print(*s++); }
+void Display::println(const char* s) { print(s); s_cursorX = 0; s_cursorY += FONT5X7_HEIGHT + 1; }
+
+void Display::present() {
+    ensureBuffers();
+    if (!screenbuffer || !s_decodeBuf) return;
+    for (int y = 0; y < height; ++y)
+        for (int x = 0; x < width; ++x)
+            s_decodeBuf[y*width+x] = s_palette[getNibble((int16_t)x,(int16_t)y) & 0x0F];
+    gfx.drawImage(POK_VIEWPORT_X, POK_VIEWPORT_Y, s_decodeBuf, width, height);
+    gfx.update();
+}
 
 } // namespace Pokitto

@@ -7,3 +7,4 @@
 #include "pokitto_compat/PokittoDisplay.h"
 #include "pokitto_compat/PokittoSound.h"
 #include "pokitto_compat/PokittoCookie.h"
+#include "pokitto_compat/Font5x7.h"
