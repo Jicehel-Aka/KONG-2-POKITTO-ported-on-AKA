@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "id": "kong2",
+  "title": "Kong II",
+  "version": "0.1.0",
+  "platform": "Pokitto",
+  "port_level": "raw",
+  "author": "Press Play On Tape",
+  "porter": "AKA Port Studio",
+  "license": "BSD-3-Clause",
+  "copyright": "Press Play On Tape",
+  "source_repository": "https://github.com/Press-Play-On-Tape/Kong-II-Pokitto",
+  "description": "Pokitto to AKA port (fondation V0.1 - pokitto_compat + aka_runtime, integration du jeu a suivre)",
+  "supports_save": true,
+  "supports_screenshot": false,
+  "supports_languages": false,
+  "supports_pause": true,
+  "save_directory": "/sdcard/kong2/",
+  "license_file": "LICENSE.original",
+  "controls": {
+    "a": "Jump",
+    "b": "Action",
+    "c": "Unused",
+    "d": "Pause (extension AKA)"
+  },
+  "aka_features": [
+    "pause_button"
+  ]
+}

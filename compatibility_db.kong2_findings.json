@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "notes": "Constats reels releves en portant Kong-II (premiere reference V0.1). A fusionner dans compatibility_db/compatibility_db.json du depot AKA_port_studio.",
+  "symbols": [
+    { "symbol": "Pokitto::Core::begin",          "status": "supported" },
+    { "symbol": "Pokitto::Core::update",         "status": "supported", "note": "cadence via setFrameRate ; presente la frame precedente avant de rendre la main" },
+    { "symbol": "Pokitto::Core::isRunning",      "status": "supported" },
+    { "symbol": "Pokitto::Core::setFrameRate",   "status": "supported" },
+    { "symbol": "Pokitto::Core::frameCount",     "status": "supported" },
+    { "symbol": "Pokitto::Core::sound",          "status": "supported", "note": "updateStream() no-op : le mixage AKA tourne en tache de fond" },
+
+    { "symbol": "Pokitto::Buttons (via PC::buttons)", "status": "supported",
+      "note": "ECART SPEC : le jeu reel utilise PC::buttons.pressed(BTN_X)/.repeat(BTN_X,N), pas les methodes aBtn()/bBtn() du brouillon initial. Les deux sont fournies." },
+
+    { "symbol": "Pokitto::Display::clear",          "status": "supported" },
+    { "symbol": "Pokitto::Display::fillScreen",     "status": "supported" },
+    { "symbol": "Pokitto::Display::drawPixel",      "status": "supported" },
+    { "symbol": "Pokitto::Display::drawBitmap",     "status": "supported",
+      "note": "Format reel Kong-II : entete [W,H] + donnees 4bpp nibble-packe (2px/octet). Decode dans un buffer PSRAM puis un seul drawImage() -- surtout PAS un fillRect par pixel (trop lent)." },
+    { "symbol": "Pokitto::Display::loadRGBPalette", "status": "supported", "note": "non documente initialement, indispensable (mode couleur indexee)" },
+    { "symbol": "Pokitto::Display::setColor",       "status": "supported" },
+    { "symbol": "Pokitto::Display::setInvisibleColor", "status": "supported", "note": "Kong-II utilise l'index 14 comme transparence" },
+    { "symbol": "Pokitto::Display::persistence",    "status": "partial", "note": "ignore pour l'instant : on redessine tout chaque frame" },
+
+    { "symbol": "Pokitto::Sound::playSFX",         "status": "partial",
+      "note": "PCM 8-bit non signe embarque -> converti en 16-bit signe -> gb_audio_track_wav::play_raw(). A valider sur materiel (pas de reechantillonnage de frequence)." },
+    { "symbol": "Pokitto::Sound::playMusicStream", "status": "partial",
+      "note": "Kong-II fournit des .raw sans entete ; necessite conversion en .wav (RIFF) deposes sur la carte SD avant lecture via play_wav(). Script de conversion a ecrire (tools/convert_audio.py)." },
+    { "symbol": "Pokitto::Sound::sfxDataPtr/sfxEndPtr", "status": "supported",
+      "note": "Simules (pas de vrais pointeurs memoire) : sfxDataPtr==sfxEndPtr signale la fin, verifie via is_playing() du codec a chaque frame (Sound::poll())." },
+    { "symbol": "Pokitto::Sound::playTone/stopTone", "status": "unused", "note": "documente en V0.1 mais jamais appele par Kong-II" },
+
+    { "symbol": "Pokitto::Cookie::begin",       "status": "supported",
+      "note": "ECART SPEC : signature reelle a 3 arguments (name, size, data*), pas begin() sans argument." },
+    { "symbol": "Pokitto::Cookie::loadCookie/saveCookie", "status": "supported", "note": "fichier /sdcard/<id>/save.dat" },
+
+    { "symbol": "Sprites::drawOverwrite/drawSelfMasked/drawPlusMask", "status": "not_needed",
+      "note": "Kong-II n'utilise PAS la classe Sprites -- tout passe par PD::drawBitmap directement. A confirmer sur les jeux de reference V0.2 avant de la considerer non prioritaire." },
+
+    { "symbol": "aka_runtime menu systeme complet (Volume/Langue/Infos/Credits/Licence)", "status": "manual",
+      "note": "pas encore implemente cette session ; fondation (begin/update/paths/returnToLoader) posee, ecrans a construire." },
+    { "symbol": "aka_runtime.takeScreenshot",   "status": "manual", "note": "stub retournant false ; a factoriser depuis gfx_save_screenshot_bmp du projet GnW_AKA" },
+    { "symbol": "aka_runtime settings.json (langue/volumes persistes)", "status": "manual", "note": "valeurs en memoire par defaut pour l'instant, pas de lecture/ecriture JSON" }
+  ]
+}
