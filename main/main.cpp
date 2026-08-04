@@ -39,6 +39,10 @@ extern "C" void app_main(void) {
     gfx.set_refresh_rate(60);
 
     akaRuntime.begin("kong2");
+    static const char* const kControls[] = { "CTRL_MOVE", "CTRL_CLIMB", "CTRL_JUMP", nullptr };
+    akaRuntime.setControlsKeys(kControls);
+    akaRuntime.setCredits("Kong II", "Press Play On Tape", "BSD 3-Clause",
+                           "github.com/Press-Play-On-Tape/Kong-II-Pokitto");
 
     cookie.begin("KONGII", sizeof(cookie), (char*)&cookie);
 
@@ -69,6 +73,7 @@ extern "C" void app_main(void) {
     game.setup(&cookie);
 
     while (PC::isRunning()) {
+        PC::suppressPresent = akaRuntime.isMenuOpen();   // evite le clignotement menu/jeu
         if (!PC::update()) continue;
         if (!akaRuntime.update(g_keys)) continue;   // menu systeme actif ce tour-ci
         PC::sound.updateStream();
