@@ -40,6 +40,13 @@ public:
     static uint32_t frameCount;
     static Buttons  buttons;        // PC::buttons.pressed(...) — usage reel Kong-II
 
+    // BUG TROUVE ET CORRIGE (Galaxy Fighter) : le menu systeme (aka_runtime)
+    // dessine directement via gfx, mais update() rappelle INCONDITIONNELLEMENT
+    // Display::present() (qui reaffiche la frame du JEU par-dessus) -- les
+    // deux se marchaient dessus en alternance, d'ou le clignotement. A
+    // positionner a true par main.cpp tant que le menu systeme est ouvert.
+    static bool suppressPresent;
+
     // Pokitto::Core::sound est utilise par main.cpp (PC::sound.updateStream()) :
     // no-op ici, le mixage audio AKA tourne en tache de fond (cf audio_game_init()).
     struct SoundStreamStub { void updateStream() {} };

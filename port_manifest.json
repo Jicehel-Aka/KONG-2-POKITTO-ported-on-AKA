@@ -10,7 +10,7 @@
   "license": "BSD-3-Clause",
   "copyright": "Press Play On Tape",
   "source_repository": "https://github.com/Press-Play-On-Tape/Kong-II-Pokitto",
-  "description": "Pokitto to AKA port (fondation V0.1 - pokitto_compat + aka_runtime, integration du jeu a suivre)",
+  "description": "Aidez Junior a grimper la falaise en evitant les oiseaux et les pieges pour liberer son pere, Donkey Kong. Portage du jeu Pokitto original de Press Play On Tape.",
   "supports_save": true,
   "supports_screenshot": false,
   "supports_languages": false,

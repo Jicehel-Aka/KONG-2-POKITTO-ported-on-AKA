@@ -8,6 +8,7 @@
 namespace Pokitto {
 
 uint32_t Core::frameCount = 0;
+bool Core::suppressPresent = false;
 Buttons  Core::buttons;
 
 static uint8_t  s_fps = 60;
@@ -33,17 +34,30 @@ bool Buttons::released(uint8_t btn) const { return g_keys.released & btn_mask(bt
 bool Buttons::down(uint8_t btn)     const { return g_keys.raw      & btn_mask(btn); }
 
 bool Buttons::repeat(uint8_t btn, uint8_t framesInterval) const {
-    // Auto-repeat façon UI : premier appui immediat (pressed), puis un nouveau
-    // "tick" toutes les framesInterval frames tant que la touche est maintenue.
+    // BUG TROUVE ET CORRIGE : l'ancienne version approximait la repetition
+    // avec un modulo sur le temps maintenu, ce qui ne renvoyait "vrai" qu'une
+    // fraction du temps (~25%) meme avec framesInterval=1 -- alors que les
+    // jeux (ex: Galaxy Fighter : pressed(BTN_LEFT) || repeat(BTN_LEFT, 1))
+    // attendent un "vrai" pratiquement CHAQUE frame quand l'intervalle vaut 1
+    // (mouvement continu). Resultat observe : deplacement saccade, comme
+    // s'il ne reagissait que par a-coups sur des fronts.
+    // Nouvelle version : suivi par COMPTEUR DE FRAMES (Core::frameCount),
+    // pas par le temps reel -- correspond a la cadence logique du jeu.
+    static uint32_t s_nextRepeatFrame[BTN_COUNT] = {0};
+
     uint32_t mask = btn_mask(btn);
-    if (!(g_keys.raw & mask)) return false;
-    if (g_keys.pressed & mask) return true;              // premier front, deja gere par pressed()
-    // approx a partir du temps de maintien (holdStart) et de la cadence de frame
-    int bit = __builtin_ctz(mask ? mask : 1);
-    uint32_t held_ms = g_keys.holdStart[bit] ? (now_ms() - g_keys.holdStart[bit]) : 0;
-    uint32_t frame_ms = s_fps ? (1000u / s_fps) : 16;
-    uint32_t interval_ms = frame_ms * (framesInterval ? framesInterval : 1);
-    return interval_ms ? (held_ms % (interval_ms * 4) < frame_ms) : false;  // repetition periodique approx
+    if (!(g_keys.raw & mask)) { s_nextRepeatFrame[btn] = 0; return false; }
+
+    uint32_t interval = framesInterval ? framesInterval : 1;
+    if (g_keys.pressed & mask) {
+        s_nextRepeatFrame[btn] = Core::frameCount + interval;   // premier front deja gere par pressed()
+        return false;
+    }
+    if (Core::frameCount >= s_nextRepeatFrame[btn]) {
+        s_nextRepeatFrame[btn] = Core::frameCount + interval;
+        return true;
+    }
+    return false;
 }
 
 bool Buttons::aBtn()     const { return down(BTN_A); }
@@ -73,8 +87,14 @@ bool Core::update() {
     s_lastFrameMs = t;
     s_firstFrame = false;
 
-    if (frameCount > 0) Display::present();   // affiche la frame precedente avant d'en dessiner une nouvelle
+    if (frameCount > 0 && !suppressPresent) Display::present();   // affiche la frame precedente avant d'en dessiner une nouvelle
     input_poll(g_keys);
+    // BUG TROUVE ET CORRIGE : Sound::poll() n'etait jamais appele -- sfxDataPtr
+    // ne se mettait jamais a jour, Utils::sfxOver() renvoyait toujours faux,
+    // et les jeux utilisant un systeme de priorite de son (ex: Galaxy Fighter,
+    // BaseState::playSFX_ByPriority) restaient bloques apres le premier son
+    // (soundFX.active ne repassait jamais a false).
+    Sound::poll();
     ++frameCount;
     return true;
 }

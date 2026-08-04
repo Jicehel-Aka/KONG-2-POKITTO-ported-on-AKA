@@ -57,7 +57,7 @@ void Sound::begin() {
     // (streaming musique) est plus gourmande en pile que le simple memcpy
     // des SFX embarques ; un stack trop juste peut produire des lectures
     // silencieuses/corrompues sans crash visible.
-    BaseType_t ok = xTaskCreatePinnedToCore(audio_mix_task, "AudioMixTask", 8192, nullptr, 5, nullptr, 0);
+    BaseType_t ok = xTaskCreatePinnedToCore(audio_mix_task, "AudioMixTask", 8192, nullptr, 5, nullptr, 1);  // AKA : Core 1 (la tache principale du jeu est sur Core 0 -- evite la contention)
     ESP_LOGI(TAG, "tache de mixage creee : %s", ok == pdPASS ? "ok" : "ECHEC");
 }
 
