@@ -24,6 +24,13 @@ public:
     // la langue courante), a appeler juste apres begin().
     void setControlsKeys(const char* const* keys);
 
+    // Optionnel : pour un jeu-collection (ex: crisp-game-lib, 267 mini-jeux)
+    // qui a son propre selecteur de jeu interne -- si defini, une entree
+    // "Choisir un jeu" apparait dans le menu systeme, juste apres
+    // "Reprendre", et appelle cette fonction. Absent par defaut (les jeux
+    // simples comme Kong-II n'ont pas ce concept).
+    void setGameMenuCallback(void (*callback)());
+
     // A appeler une fois par frame ; renvoie true si le jeu doit continuer
     // (lire les boutons, dessiner), false si le menu systeme a pris la main
     // ce tour-ci (gere entierement ici, le jeu ne doit RIEN faire d'autre).
@@ -71,6 +78,7 @@ private:
     const char* m_license = "";
     const char* m_sourceUrl = "";
     const char* const* m_controlsKeys = nullptr;
+    void (*m_gameMenuCallback)() = nullptr;
 
     // Menu systeme : etat + rendu (methodes privees, definies dans le .cpp).
     void menuDrawMain();

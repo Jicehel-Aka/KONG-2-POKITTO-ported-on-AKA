@@ -27,7 +27,7 @@ static bool s_helpRequested = false;
 // ---------------------------------------------------------------------
 // Langues : table en memoire, chargee depuis DEUX fichiers par langue --
 // /sdcard/AKA/lang/<code>.json (COMMUN, partage par tous les jeux : libelles
-// du menu systeme) PUIS /sdcard/AKA/lang/<gameId>/<code>.json (SPECIFIQUE au
+// du menu systeme) PUIS /sdcard/<gameId>/lang/<code>.json (SPECIFIQUE au
 // jeu : commandes, credits...). Recherche en ordre INVERSE (le plus
 // recemment charge -- donc le specifique au jeu -- gagne en cas de cle en
 // double). Format volontairement simple ({"CLE": "texte"}, pas de JSON
@@ -90,7 +90,7 @@ static void load_language(const char* gameId, const char* code) {
     s_langCount = 0;
     char pathCommon[64], pathGame[96];
     snprintf(pathCommon, sizeof pathCommon, "/sdcard/AKA/lang/%s.json", code);
-    snprintf(pathGame, sizeof pathGame, "/sdcard/AKA/lang/%s/%s.json", gameId, code);
+    snprintf(pathGame, sizeof pathGame, "/sdcard/%s/lang/%s.json", gameId, code);
     load_language_file_append(pathCommon);
     load_language_file_append(pathGame);
 }
@@ -113,11 +113,12 @@ void AkaRuntime::begin(const char* gameId) {
     ESP_LOGI(TAG, "verif /sdcard : %s (errno=%d si echec)", sd_ok ? "monte" : "ABSENT/PAS MONTE", sd_ok ? 0 : errno);
 
     sd_mkdir("/sdcard/AKA");
-    sd_mkdir("/sdcard/AKA/screenshots");
     sd_mkdir("/sdcard/AKA/lang");
-    char langGameDir[80]; snprintf(langGameDir, sizeof langGameDir, "/sdcard/AKA/lang/%s", gameId);
-    sd_mkdir(langGameDir);
     sd_mkdir(m_gamePath);
+    char langGameDir[80]; snprintf(langGameDir, sizeof langGameDir, "%s/lang", m_gamePath);
+    sd_mkdir(langGameDir);
+    char shotGameDir[80]; snprintf(shotGameDir, sizeof shotGameDir, "%s/screenshots", m_gamePath);
+    sd_mkdir(shotGameDir);
     char musicDir[80]; snprintf(musicDir, sizeof musicDir, "%s/music", m_gamePath);
     sd_mkdir(musicDir);
     load_language(m_gameId, m_language);
@@ -130,6 +131,10 @@ void AkaRuntime::setCredits(const char* title, const char* author,
 
 void AkaRuntime::setControlsKeys(const char* const* keys) {
     m_controlsKeys = keys;
+}
+
+void AkaRuntime::setGameMenuCallback(void (*callback)()) {
+    m_gameMenuCallback = callback;
 }
 
 static void check_return_to_loader(bool run_held, bool menu_held) {
@@ -157,10 +162,23 @@ static MenuState s_menuState = MenuState::Closed;
 static int8_t s_menuSel = 0;
 static int8_t s_langSel = 0;
 
-static const char* const kMainKeys[] = {
-    "MENU_RESUME", "MENU_CONTROLS", "MENU_LANGUAGE", "MENU_CREDITS", "MENU_RETURN_LOADER"
-};
-static const int kMainCount = 5;
+enum class MenuAction : uint8_t { Resume, GameSelect, Controls, Language, Credits, ReturnLoader };
+static const char* s_menuKeys[6];
+static MenuAction  s_menuActions[6];
+static int         s_menuCount = 0;
+
+static void rebuild_main_menu(bool hasGameMenu) {
+    int i = 0;
+    s_menuKeys[i] = "MENU_RESUME";        s_menuActions[i] = MenuAction::Resume;       ++i;
+    if (hasGameMenu) {
+        s_menuKeys[i] = "MENU_GAME_SELECT"; s_menuActions[i] = MenuAction::GameSelect; ++i;
+    }
+    s_menuKeys[i] = "MENU_CONTROLS";      s_menuActions[i] = MenuAction::Controls;     ++i;
+    s_menuKeys[i] = "MENU_LANGUAGE";      s_menuActions[i] = MenuAction::Language;     ++i;
+    s_menuKeys[i] = "MENU_CREDITS";       s_menuActions[i] = MenuAction::Credits;      ++i;
+    s_menuKeys[i] = "MENU_RETURN_LOADER"; s_menuActions[i] = MenuAction::ReturnLoader; ++i;
+    s_menuCount = i;
+}
 
 static const char* const kLangCodes[] = { "fr", "en", "de", "es", "it" };
 static const char* const kLangNames[] = { "Francais", "English", "Deutsch", "Espanol", "Italiano" };
@@ -179,14 +197,14 @@ static void menu_frame(const char* titleKey) {
 
 void AkaRuntime::menuDrawMain() {
     menu_frame("MENU_TITLE");
-    for (int i = 0; i < kMainCount; ++i) {
+    for (int i = 0; i < s_menuCount; ++i) {
         int y = 50 + i * 16;
         bool sel = (i == s_menuSel);
         gfx.setColor(sel ? gfx.makeColor(255, 220, 0) : gfx.makeColor(255, 255, 255));
         gfx.move_cursor(52, y);
         gfx.print_str(sel ? ">" : " ");
         gfx.move_cursor(64, y);
-        gfx.print_str(translate(kMainKeys[i]));
+        gfx.print_str(translate(s_menuKeys[i]));
     }
 }
 
@@ -252,6 +270,19 @@ void AkaRuntime::menuDrawCredits() {
     }
 }
 
+// Efface la zone occupee par la boite du menu avant de rendre la main au
+// jeu -- BUG TROUVE ET CORRIGE : certains jeux ne redessinent pas tout
+// l'ecran a chaque frame (optimisation courante dans cette bibliotheque),
+// donc rien ne venait effacer le contour du menu apres sa fermeture, qui
+// restait visible indefiniment par-dessus le jeu. Le jeu redessine son
+// propre contenu par-dessus des l'image suivante -- ce nettoyage n'est
+// visible qu'une fraction de frame.
+static void clear_menu_box() {
+    gfx.setColor(gfx.makeColor(0, 0, 0));
+    gfx.fillRect(40, 20, 240, 200);
+    gfx.update();
+}
+
 // Renvoie true si le menu doit rester ouvert (le jeu ne doit rien faire
 // d'autre ce tour-ci), false quand il vient de se fermer (le jeu reprend
 // la main a partir du tour SUIVANT).
@@ -268,16 +299,18 @@ bool AkaRuntime::menuHandleInput(const Keys& k) {
             return false;   // ne devrait pas arriver (appele seulement si menu ouvert)
 
         case MenuState::Main:
-            if (up)   s_menuSel = (int8_t)((s_menuSel + kMainCount - 1) % kMainCount);
-            if (down) s_menuSel = (int8_t)((s_menuSel + 1) % kMainCount);
-            if (c || menuShort) { s_menuState = MenuState::Closed; return false; }
+            if (up)   s_menuSel = (int8_t)((s_menuSel + s_menuCount - 1) % s_menuCount);
+            if (down) s_menuSel = (int8_t)((s_menuSel + 1) % s_menuCount);
+            if (c || menuShort) { clear_menu_box(); s_menuState = MenuState::Closed; return false; }
             if (a) {
-                switch (s_menuSel) {
-                    case 0: s_menuState = MenuState::Closed; return false;           // Reprendre
-                    case 1: s_menuState = MenuState::Controls; break;                // Commandes
-                    case 2: s_menuState = MenuState::Language; s_langSel = 0; break; // Langue
-                    case 3: s_menuState = MenuState::Credits; break;                 // Credits
-                    case 4: returnToLoader(); break;                                 // Retour au loader
+                switch (s_menuActions[s_menuSel]) {
+                    case MenuAction::Resume:       clear_menu_box(); s_menuState = MenuState::Closed; return false;
+                    case MenuAction::GameSelect:    if (m_gameMenuCallback) m_gameMenuCallback();
+                                                     clear_menu_box(); s_menuState = MenuState::Closed; return false;
+                    case MenuAction::Controls:     s_menuState = MenuState::Controls; break;
+                    case MenuAction::Language:     s_menuState = MenuState::Language; s_langSel = 0; break;
+                    case MenuAction::Credits:      s_menuState = MenuState::Credits; break;
+                    case MenuAction::ReturnLoader: returnToLoader(); break;
                 }
             }
             menuDrawMain();
@@ -332,6 +365,7 @@ bool AkaRuntime::update(const Keys& k) {
         s_was_held = true;
     } else {
         if (s_was_held && !s_shot_done && s_menu_start != 0) {
+            rebuild_main_menu(m_gameMenuCallback != nullptr);
             s_menuState = MenuState::Main;
             s_menuSel = 0;
             ESP_LOGI(TAG, "MENU (appui court) -> menu systeme ouvert");
@@ -351,17 +385,21 @@ bool AkaRuntime::isMenuOpen() const { return s_menuState != MenuState::Closed; }
 
 const char* AkaRuntime::gamePath()       const { return m_gamePath; }
 const char* AkaRuntime::settingsPath()   const { return "/sdcard/AKA/settings.json"; }
-const char* AkaRuntime::screenshotPath() const { return "/sdcard/AKA/screenshots"; }
+const char* AkaRuntime::screenshotPath() const {
+    static char buf[80];
+    snprintf(buf, sizeof buf, "%s/screenshots", m_gamePath);
+    return buf;
+}
 
 bool AkaRuntime::takeScreenshot() {
-    static const char* kDir = "/sdcard/AKA/screenshots";
+    char kDir[80]; snprintf(kDir, sizeof kDir, "%s/screenshots", m_gamePath);
     bool mkOk = sd_mkdir(kDir);
     ESP_LOGI(TAG, "takeScreenshot: mkdir(%s) -> %s", kDir, mkOk ? "ok" : "ECHEC");
 
-    char path[80];
+    char path[96];
     int shot_num = -1;
     for (int i = 0; i < 10000; ++i) {
-        snprintf(path, sizeof(path), "%s/%s_%04d.BMP", kDir, m_gameId, i);
+        snprintf(path, sizeof(path), "%s/%04d.BMP", kDir, i);
         FILE* test = fopen(path, "rb");
         if (!test) { shot_num = i; break; }
         fclose(test);
